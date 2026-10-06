@@ -512,6 +512,42 @@ send_response(client_socket, response);
             }
 
             continue;
+        }        if (strncmp(buffer, "ROOMS", 5) == 0)
+        {
+            char room_list[BUFFER_SIZE];
+            room_list[0] = '\0';
+
+            pthread_mutex_lock(&rooms_mutex);
+
+            for (int i = 0; i < room_count; i++)
+            {
+                if (i > 0)
+                {
+                    strncat(room_list, ",",
+                            sizeof(room_list) - strlen(room_list) - 1);
+                }
+
+                strncat(room_list,
+                        rooms[i].name,
+                        sizeof(room_list) - strlen(room_list) - 1);
+            }
+
+            pthread_mutex_unlock(&rooms_mutex);
+
+            char response[BUFFER_SIZE];
+
+            if (room_count == 0)
+            {
+                snprintf(response, sizeof(response), "OK ROOMS");
+            }
+            else
+            {
+                snprintf(response, sizeof(response),
+                         "OK ROOMS %s", room_list);
+            }
+
+            send_response(client_socket, response);
+            continue;
         }
 
 
