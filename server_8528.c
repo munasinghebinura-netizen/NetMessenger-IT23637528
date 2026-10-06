@@ -152,6 +152,26 @@ void remove_client(int socket)
 
     pthread_mutex_unlock(&clients_mutex);
 }
+int find_client_socket(const char *username)
+{
+    int socket = -1;
+
+    pthread_mutex_lock(&clients_mutex);
+
+    for (int i = 0; i < MAX_CLIENTS; i++)
+    {
+        if (clients[i].registered &&
+            strcmp(clients[i].username, username) == 0)
+        {
+            socket = clients[i].socket;
+            break;
+        }
+    }
+
+    pthread_mutex_unlock(&clients_mutex);
+
+    return socket;
+}
 
 void *client_handler(void *arg)
 {
@@ -288,7 +308,47 @@ void *client_handler(void *arg)
             send_response(client_socket, response);
 
             continue;
-        }        if (strncmp(buffer, "BCAST ", 6) == 0)
+        }             if (strncmp(buffer, "PMSG ", 5) == 0)
+        {
+            char target[USERNAME_SIZE];
+            char message[BUFFER_SIZE];
+            char forwarded[BUFFER_SIZE];
+
+            if (sscanf(buffer + 5,
+                       "%49s %[^\n]",
+                       target,
+                       message) < 2)
+            {
+                send_response(client_socket,
+                              "ERR 002 USER_NOT_FOUND");
+                continue;
+            }
+
+            int target_socket = find_client_socket(target);
+
+            if (target_socket < 0)
+            {
+                send_response(client_socket,
+                              "ERR 002 USER_NOT_FOUND");
+                continue;
+            }
+
+            snprintf(forwarded,
+                     sizeof(forwarded),
+                     "MSG PRIV %s %s\n",
+                     username,
+                     message);
+
+            send(target_socket,
+                 forwarded,
+                 strlen(forwarded),
+                 0);
+
+            send_response(client_socket, "OK SENT");
+
+            continue;
+        }
+   if (strncmp(buffer, "BCAST ", 6) == 0)
         {
             char message[BUFFER_SIZE];
             char forwarded[BUFFER_SIZE];
