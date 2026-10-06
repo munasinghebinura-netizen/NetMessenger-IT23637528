@@ -548,7 +548,64 @@ send_response(client_socket, response);
 
             send_response(client_socket, response);
             continue;
+        }        if (strncmp(buffer, "RMSG ", 5) == 0)
+        {
+            char room_name[ROOM_NAME_SIZE];
+            char message[BUFFER_SIZE];
+            char forwarded[BUFFER_SIZE];
+
+            if (sscanf(buffer + 5, "%49s %[^\n]",
+                       room_name, message) < 2)
+            {
+                send_response(client_socket, "ERR 003 ROOM_NOT_FOUND");
+                continue;
+            }
+
+            pthread_mutex_lock(&rooms_mutex);
+
+            int room_index = -1;
+
+            for (int i = 0; i < room_count; i++)
+            {
+                if (strcmp(rooms[i].name, room_name) == 0)
+                {
+                    room_index = i;
+                    break;
+                }
+            }
+
+            if (room_index == -1)
+            {
+                pthread_mutex_unlock(&rooms_mutex);
+                send_response(client_socket, "ERR 003 ROOM_NOT_FOUND");
+                continue;
+            }
+
+            snprintf(forwarded,
+                     sizeof(forwarded),
+                     "MSG ROOM %s %s %s\n",
+                     room_name,
+                     username,
+                     message);
+
+            for (int i = 0;
+                 i < rooms[room_index].member_count;
+                 i++)
+            {
+                int member_socket = rooms[room_index].members[i];
+
+                send(member_socket,
+                     forwarded,
+                     strlen(forwarded),
+                     0);
+            }
+
+            pthread_mutex_unlock(&rooms_mutex);
+
+            send_response(client_socket, "OK SENT");
+            continue;
         }
+
 
 
    if (strncmp(buffer, "BCAST ", 6) == 0)
