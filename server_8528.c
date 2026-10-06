@@ -360,7 +360,14 @@ void *client_handler(void *arg)
             send_response(client_socket, "OK SENT");
 
             continue;
-        }        if (strncmp(buffer, "JOIN ", 5) == 0)
+        }        
+
+
+
+
+
+
+if (strncmp(buffer, "JOIN ", 5) == 0)
         {
             char room_name[ROOM_NAME_SIZE];
 
@@ -440,7 +447,73 @@ void *client_handler(void *arg)
 snprintf(response, sizeof(response), "OK JOINED %s", room_name);
 send_response(client_socket, response);
             continue;
+        }        if (strncmp(buffer, "LEAVE ", 6) == 0)
+        {
+            char room_name[ROOM_NAME_SIZE];
+
+            if (sscanf(buffer + 6, "%49[^\n]", room_name) != 1)
+            {
+                send_response(client_socket, "ERR 003 ROOM_NOT_FOUND");
+                continue;
+            }
+
+            pthread_mutex_lock(&rooms_mutex);
+
+            int room_index = -1;
+
+            for (int i = 0; i < room_count; i++)
+            {
+                if (strcmp(rooms[i].name, room_name) == 0)
+                {
+                    room_index = i;
+                    break;
+                }
+            }
+
+            if (room_index == -1)
+            {
+                pthread_mutex_unlock(&rooms_mutex);
+                send_response(client_socket, "ERR 003 ROOM_NOT_FOUND");
+                continue;
+            }
+
+            int member_found = 0;
+
+            for (int i = 0; i < rooms[room_index].member_count; i++)
+            {
+                if (rooms[room_index].members[i] == client_socket)
+                {
+                    for (int j = i;
+                         j < rooms[room_index].member_count - 1;
+                         j++)
+                    {
+                        rooms[room_index].members[j] =
+                            rooms[room_index].members[j + 1];
+                    }
+
+                    rooms[room_index].member_count--;
+                    member_found = 1;
+                    break;
+                }
+            }
+
+            pthread_mutex_unlock(&rooms_mutex);
+
+            if (member_found)
+            {
+                char response[BUFFER_SIZE];
+                snprintf(response, sizeof(response),
+                         "OK LEFT %s", room_name);
+                send_response(client_socket, response);
+            }
+            else
+            {
+                send_response(client_socket, "ERR 003 ROOM_NOT_FOUND");
+            }
+
+            continue;
         }
+
 
    if (strncmp(buffer, "BCAST ", 6) == 0)
         {
