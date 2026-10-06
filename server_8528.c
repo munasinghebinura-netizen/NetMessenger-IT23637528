@@ -23,7 +23,20 @@ typedef struct
 } Client;
 
 Client clients[MAX_CLIENTS];
+#define MAX_ROOMS 50
+#define MAX_ROOM_MEMBERS 50
+#define ROOM_NAME_SIZE 50
 
+typedef struct {
+    char name[ROOM_NAME_SIZE];
+    int members[MAX_ROOM_MEMBERS];
+    int member_count;
+} Room;
+
+Room rooms[MAX_ROOMS];
+int room_count = 0;
+
+pthread_mutex_t rooms_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t clients_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t log_mutex = PTHREAD_MUTEX_INITIALIZER;
 
@@ -347,7 +360,88 @@ void *client_handler(void *arg)
             send_response(client_socket, "OK SENT");
 
             continue;
+        }        if (strncmp(buffer, "JOIN ", 5) == 0)
+        {
+            char room_name[ROOM_NAME_SIZE];
+
+            if (sscanf(buffer + 5, "%49[^\n]", room_name) != 1)
+            {
+                send_response(client_socket, "ERR 003 ROOM_NOT_FOUND");
+                continue;
+            }
+
+            pthread_mutex_lock(&rooms_mutex);
+
+            int room_index = -1;
+
+            for (int i = 0; i < room_count; i++)
+            {
+                if (strcmp(rooms[i].name, room_name) == 0)
+                {
+                    room_index = i;
+                    break;
+                }
+            }
+
+            /* Create room if it does not exist */
+            if (room_index == -1)
+            {
+                if (room_count >= MAX_ROOMS)
+                {
+                    pthread_mutex_unlock(&rooms_mutex);
+                    send_response(client_socket, "ERR 003 ROOM_NOT_FOUND");
+                    continue;
+                }
+
+                room_index = room_count;
+
+                strncpy(rooms[room_index].name,
+                        room_name,
+                        ROOM_NAME_SIZE - 1);
+
+                rooms[room_index].name[ROOM_NAME_SIZE - 1] = '\0';
+                rooms[room_index].member_count = 0;
+                room_count++;
+            }
+
+            /* Check whether client is already a member */
+            int already_member = 0;
+
+            for (int i = 0;
+                 i < rooms[room_index].member_count;
+                 i++)
+            {
+                if (rooms[room_index].members[i] == client_socket)
+                {
+                    already_member = 1;
+                    break;
+                }
+            }
+
+            if (!already_member)
+            {
+                if (rooms[room_index].member_count >= MAX_ROOM_MEMBERS)
+                {
+                    pthread_mutex_unlock(&rooms_mutex);
+                    send_response(client_socket, "ERR 003 ROOM_NOT_FOUND");
+                    continue;
+                }
+
+                rooms[room_index].members[
+                    rooms[room_index].member_count
+                ] = client_socket;
+
+                rooms[room_index].member_count++;
+            }
+
+            pthread_mutex_unlock(&rooms_mutex);
+
+         char response[BUFFER_SIZE];
+snprintf(response, sizeof(response), "OK JOINED %s", room_name);
+send_response(client_socket, response);
+            continue;
         }
+
    if (strncmp(buffer, "BCAST ", 6) == 0)
         {
             char message[BUFFER_SIZE];
