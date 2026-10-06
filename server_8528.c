@@ -499,6 +499,16 @@ create_storage_directory(username);
                  0);
 
             send_response(client_socket, "OK SENT");
+                char log_message[BUFFER_SIZE];
+
+snprintf(log_message,
+         sizeof(log_message),
+         "PMSG from %s to %s: %s",
+         username,
+         target,
+         message);
+
+write_log(log_message);
 
             continue;
         }        
@@ -744,6 +754,16 @@ send_response(client_socket, response);
             pthread_mutex_unlock(&rooms_mutex);
 
             send_response(client_socket, "OK SENT");
+             char log_message[BUFFER_SIZE];
+
+snprintf(log_message,
+         sizeof(log_message),
+         "RMSG from %s to room %s: %s",
+         username,
+         room_name,
+         message);
+
+write_log(log_message);
             continue;
         }        if (strncmp(buffer, "SENDFILE ", 9) == 0)
         {
@@ -868,6 +888,17 @@ send_response(client_socket, response);
                  filename);
 
         send_response(client_socket, response);
+          char log_message[BUFFER_SIZE];
+
+snprintf(log_message,
+         sizeof(log_message),
+         "SENDFILE from %s to %s: %s (%ld bytes)",
+         username,
+         target,
+         filename,
+         filesize);
+
+write_log(log_message);
 
         printf("File received: %s (%ld bytes)\n",
                filepath,
@@ -899,6 +930,15 @@ send_response(client_socket, response);
             send_to_all(forwarded, client_socket);
 
             send_response(client_socket, "OK SENT");
+            char log_message[BUFFER_SIZE];
+
+snprintf(log_message,
+         sizeof(log_message),
+         "BCAST from %s: %s",
+         username,
+         message);
+
+write_log(log_message);
 
             continue;
         }
@@ -906,6 +946,7 @@ send_response(client_socket, response);
         if (strcmp(buffer, "QUIT") == 0)
         {
             send_response(client_socket, "OK BYE");
+           sleep(1);
             break;
         }
 
