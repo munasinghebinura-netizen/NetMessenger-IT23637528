@@ -134,6 +134,23 @@ void remove_client(int socket)
     }
 
     pthread_mutex_unlock(&clients_mutex);
+}void send_to_all(const char *message, int sender_socket)
+{
+    pthread_mutex_lock(&clients_mutex);
+
+    for (int i = 0; i < MAX_CLIENTS; i++)
+    {
+        if (clients[i].registered &&
+            clients[i].socket != sender_socket)
+        {
+            send(clients[i].socket,
+                 message,
+                 strlen(message),
+                 0);
+        }
+    }
+
+    pthread_mutex_unlock(&clients_mutex);
 }
 
 void *client_handler(void *arg)
@@ -237,6 +254,59 @@ void *client_handler(void *arg)
             write_log(log_message);
 
             printf("User registered: %s\n", username);
+
+            continue;
+        }        if (strcmp(buffer, "LIST") == 0)
+        {
+            char response[BUFFER_SIZE];
+            char users[BUFFER_SIZE];
+
+            users[0] = '\0';
+
+            pthread_mutex_lock(&clients_mutex);
+
+            for (int i = 0; i < MAX_CLIENTS; i++)
+            {
+                if (clients[i].registered)
+                {
+                    if (strlen(users) > 0)
+                    {
+                        strcat(users, ",");
+                    }
+
+                    strcat(users, clients[i].username);
+                }
+            }
+
+            pthread_mutex_unlock(&clients_mutex);
+
+            snprintf(response,
+                     sizeof(response),
+                     "OK USERS %s",
+                     users);
+
+            send_response(client_socket, response);
+
+            continue;
+        }        if (strncmp(buffer, "BCAST ", 6) == 0)
+        {
+            char message[BUFFER_SIZE];
+            char forwarded[BUFFER_SIZE];
+
+            snprintf(message,
+                     sizeof(message),
+                     "%s",
+                     buffer + 6);
+
+            snprintf(forwarded,
+                     sizeof(forwarded),
+                     "MSG BCAST %s %s\n",
+                     username,
+                     message);
+
+            send_to_all(forwarded, client_socket);
+
+            send_response(client_socket, "OK SENT");
 
             continue;
         }
