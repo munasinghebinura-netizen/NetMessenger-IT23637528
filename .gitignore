@@ -1,0 +1,7 @@
+client_8528
+server_8528
+*.o
+bike.jpg
+test.txt
+storage/
+*.log
