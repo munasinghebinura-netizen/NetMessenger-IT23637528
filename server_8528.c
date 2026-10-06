@@ -1,3 +1,5 @@
+
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -5,7 +7,7 @@
 #include <arpa/inet.h>
 #include <pthread.h>
 #include <time.h>
-
+#include <sys/stat.h>
 #define PORT 14528
 #define NID "6378"
 #define BACKLOG 10
@@ -185,13 +187,159 @@ int find_client_socket(const char *username)
 
     return socket;
 }
+void create_storage_directory(const char *username)
+{
+    char path[BUFFER_SIZE];
 
+    mkdir("storage", 0777);
+    mkdir("storage/IT236378528", 0777);
+
+    snprintf(path, sizeof(path),
+             "storage/IT236378528/%s",
+             username);
+
+    mkdir(path, 0777);
+}
+int receive_file_data(int socket,
+                      char *pending,
+                      size_t *pending_len,
+                      size_t filesize,
+                      FILE *file)
+{
+    size_t total_received = 0;
+
+    while (total_received < filesize)
+    {
+        if (*pending_len > 0)
+        {
+            size_t available = *pending_len;
+            size_t remaining = filesize - total_received;
+            size_t to_write = available < remaining
+                              ? available
+                              : remaining;
+
+            if (fwrite(pending, 1, to_write, file) != to_write)
+            {
+                return -1;
+            }
+
+            total_received += to_write;
+
+            memmove(pending,
+                    pending + to_write,
+                    *pending_len - to_write);
+
+            *pending_len -= to_write;
+
+            continue;
+        }
+
+        char file_buffer[BUFFER_SIZE];
+
+        size_t remaining = filesize - total_received;
+        size_t to_read = remaining < sizeof(file_buffer)
+                         ? remaining
+                         : sizeof(file_buffer);
+
+        ssize_t received = recv(socket,
+                                 file_buffer,
+                                 to_read,
+                                 0);
+
+        if (received <= 0)
+        {
+            return -1;
+        }
+
+        if (fwrite(file_buffer, 1, received, file) != (size_t)received)
+        {
+            return -1;
+        }
+
+        total_received += received;
+    }
+
+    return 0;
+}
+int receive_line(int socket,
+                 char *line,
+                 size_t line_size,
+                 char *pending,
+                 size_t *pending_len)
+{
+    while (1)
+    {
+        for (size_t i = 0; i < *pending_len; i++)
+        {
+            if (pending[i] == '\n')
+            {
+                size_t length = i + 1;
+
+                if (length >= line_size)
+                {
+                    return -1;
+                }
+
+                memcpy(line, pending, length);
+                line[length] = '\0';
+
+                memmove(pending,
+                        pending + length,
+                        *pending_len - length);
+
+                *pending_len -= length;
+
+                return 1;
+            }
+        }
+
+        if (*pending_len >= BUFFER_SIZE)
+        {
+            return -1;
+        }
+
+        ssize_t received = recv(socket,
+                                 pending + *pending_len,
+                                 BUFFER_SIZE - *pending_len,
+                                 0);
+
+        if (received <= 0)
+        {
+            return 0;
+        }
+
+        *pending_len += received;
+    }
+}
+int send_all_bytes(int socket, const char *data, size_t length)
+{
+    size_t total_sent = 0;
+
+    while (total_sent < length)
+    {
+        ssize_t sent = send(socket,
+                            data + total_sent,
+                            length - total_sent,
+                            0);
+
+        if (sent <= 0)
+        {
+            return -1;
+        }
+
+        total_sent += (size_t)sent;
+    }
+
+    return 0;
+}
 void *client_handler(void *arg)
 {
     int client_socket = *(int *)arg;
     free(arg);
 
     char buffer[BUFFER_SIZE];
+char pending[BUFFER_SIZE];
+size_t pending_len = 0;
     char username[USERNAME_SIZE];
 
     int registered = 0;
@@ -203,28 +351,20 @@ void *client_handler(void *arg)
     while (1)
     {
         memset(buffer, 0, sizeof(buffer));
+        int line_status = receive_line(client_socket,
+                                       buffer,
+                                       sizeof(buffer),
+                                       pending,
+                                       &pending_len);
 
-        ssize_t bytes_received =
-            recv(client_socket,
-                 buffer,
-                 sizeof(buffer) - 1,
-                 0);
-
-        if (bytes_received <= 0)
+        if (line_status <= 0)
         {
             break;
         }
 
-        buffer[bytes_received] = '\0';
+        buffer[strcspn(buffer, "\r\n")] = '\0';
 
-        char *newline = strchr(buffer, '\n');
-
-        if (newline != NULL)
-        {
-            *newline = '\0';
-        }
-
-        buffer[strcspn(buffer, "\r")] = '\0';
+      
 
         if (!registered)
         {
@@ -267,6 +407,7 @@ void *client_handler(void *arg)
 
             strcpy(username, requested_username);
             registered = 1;
+create_storage_directory(username);
 
             char response[BUFFER_SIZE];
 
@@ -604,7 +745,138 @@ send_response(client_socket, response);
 
             send_response(client_socket, "OK SENT");
             continue;
+        }        if (strncmp(buffer, "SENDFILE ", 9) == 0)
+        {
+            char target[USERNAME_SIZE];
+            char filename[256];
+            long filesize;
+
+            if (sscanf(buffer + 9, "%49s %255s %ld",
+                       target, filename, &filesize) != 3)
+            {
+                send_response(client_socket,
+                              "ERR 004 FILE_TOO_LARGE");
+                continue;
+            }
+
+            if (filesize <= 0)
+            {
+                send_response(client_socket,
+                              "ERR 004 FILE_TOO_LARGE");
+                continue;
+            }
+
+            printf("SENDFILE request: %s -> %s (%ld bytes)\n",
+                   username, target, filesize);
+                         int target_socket = find_client_socket(target);
+
+        if (target_socket < 0)
+        {
+            send_response(client_socket,
+                          "ERR 002 USER_NOT_FOUND");
+            continue;
         }
+                           char filepath[BUFFER_SIZE];
+        char sender_directory[BUFFER_SIZE];
+
+        snprintf(sender_directory,
+                 sizeof(sender_directory),
+                 "storage/IT236378528/%s",
+                 username);
+
+        snprintf(filepath,
+                 sizeof(filepath),
+                 "%s/%s",
+                 sender_directory,
+                 filename);
+                     FILE *file = fopen(filepath, "wb");
+
+        if (file == NULL)
+        {
+            send_response(client_socket,
+                          "ERR 004 FILE_TOO_LARGE");
+            continue;
+        }
+
+              if (receive_file_data(client_socket,
+                              pending,
+                              &pending_len,
+                              (size_t)filesize,
+                              file) != 0)
+        {
+            fclose(file);
+            remove(filepath);
+            break;
+        }
+             fclose(file);
+                     char file_header[BUFFER_SIZE];
+
+        snprintf(file_header,
+                 sizeof(file_header),
+                 "FILE %s %ld\n",
+                 filename,
+                 filesize);
+
+        if (send_all_bytes(target_socket,
+                           file_header,
+                           strlen(file_header)) != 0)
+        {
+            printf("Failed to send file header to %s\n", target);
+        }
+        else
+        {
+            FILE *send_file = fopen(filepath, "rb");
+
+            if (send_file == NULL)
+            {
+                printf("Failed to reopen file for sending\n");
+            }
+            else
+            {
+                char send_buffer[BUFFER_SIZE];
+                size_t bytes_read;
+
+                while ((bytes_read =
+                        fread(send_buffer,
+                              1,
+                              sizeof(send_buffer),
+                              send_file)) > 0)
+                {
+                    if (send_all_bytes(target_socket,
+                                       send_buffer,
+                                       bytes_read) != 0)
+                    {
+                        printf("Failed to send file to %s\n",
+                               target);
+                        break;
+                    }
+                }
+
+                fclose(send_file);
+
+                printf("File forwarded: %s -> %s (%ld bytes)\n",
+                       username,
+                       target,
+                       filesize);
+            }
+        }
+                     char response[BUFFER_SIZE];
+
+        snprintf(response,
+                 sizeof(response),
+                 "OK FILE_RECEIVED %s",
+                 filename);
+
+        send_response(client_socket, response);
+
+        printf("File received: %s (%ld bytes)\n",
+               filepath,
+               filesize);
+
+                     continue;
+    }       
+            
+
 
 
 

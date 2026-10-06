@@ -1,3 +1,4 @@
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -11,29 +12,188 @@
 
 int client_socket;
 
+int receive_line_from_socket(int socket,
+                             char *line,
+                             size_t line_size,
+                             char *pending,
+                             size_t *pending_len)
+{
+    while (1)
+    {
+        for (size_t i = 0; i < *pending_len; i++)
+        {
+            if (pending[i] == '\n')
+            {
+                size_t length = i + 1;
+
+                if (length >= line_size)
+                {
+                    return -1;
+                }
+
+                memcpy(line, pending, length);
+                line[length] = '\0';
+
+                memmove(pending,
+                        pending + length,
+                        *pending_len - length);
+
+                *pending_len -= length;
+
+                return 1;
+            }
+        }
+
+        if (*pending_len >= BUFFER_SIZE)
+        {
+            return -1;
+        }
+
+        ssize_t received = recv(socket,
+                                 pending + *pending_len,
+                                 BUFFER_SIZE - *pending_len,
+                                 0);
+
+        if (received <= 0)
+        {
+            return 0;
+        }
+
+        *pending_len += (size_t)received;
+    }
+}
+int receive_exact_bytes(int socket,
+                        char *pending,
+                        size_t *pending_len,
+                        size_t length,
+                        FILE *file)
+{
+    size_t total_received = 0;
+
+    while (total_received < length)
+    {
+        if (*pending_len > 0)
+        {
+            size_t available = *pending_len;
+            size_t remaining = length - total_received;
+            size_t to_write = available < remaining
+                              ? available
+                              : remaining;
+
+            if (fwrite(pending, 1, to_write, file) != to_write)
+            {
+                return -1;
+            }
+
+            total_received += to_write;
+
+            memmove(pending,
+                    pending + to_write,
+                    *pending_len - to_write);
+
+            *pending_len -= to_write;
+
+            continue;
+        }
+
+        char file_buffer[BUFFER_SIZE];
+
+        size_t remaining = length - total_received;
+        size_t to_read = remaining < sizeof(file_buffer)
+                         ? remaining
+                         : sizeof(file_buffer);
+
+        ssize_t received = recv(socket,
+                                 file_buffer,
+                                 to_read,
+                                 0);
+
+        if (received <= 0)
+        {
+            return -1;
+        }
+
+        if (fwrite(file_buffer,
+                   1,
+                   (size_t)received,
+                   file) != (size_t)received)
+        {
+            return -1;
+        }
+
+        total_received += (size_t)received;
+    }
+
+    return 0;
+}
 void *receive_messages(void *arg)
 {
     char buffer[BUFFER_SIZE];
-    ssize_t bytes_received;
+    char pending[BUFFER_SIZE * 2];
+size_t pending_len = 0;
 
     (void)arg;
 
     while (1)
     {
-        memset(buffer, 0, sizeof(buffer));
+                int line_status = receive_line_from_socket(client_socket,
+                                                    buffer,
+                                                    sizeof(buffer),
+                                                    pending,
+                                                    &pending_len);
 
-        bytes_received = recv(client_socket,
-                              buffer,
-                              sizeof(buffer) - 1,
-                              0);
-
-        if (bytes_received <= 0)
+        if (line_status <= 0)
         {
             printf("\nDisconnected from server.\n");
             break;
         }
 
-        buffer[bytes_received] = '\0';
+        buffer[strcspn(buffer, "\r\n")] = '\0';
+                 if (strncmp(buffer, "FILE ", 5) == 0)
+        {
+            char filename[BUFFER_SIZE];
+            long filesize;
+
+            if (sscanf(buffer + 5, "%s %ld",
+                       filename, &filesize) == 2 &&
+                filesize > 0)
+            {
+                FILE *file = fopen(filename, "wb");
+
+                if (file == NULL)
+                {
+                    printf("\nFailed to create received file: %s\n",
+                           filename);
+                }
+                else
+                {
+                    if (receive_exact_bytes(client_socket,
+                                            pending,
+                                            &pending_len,
+                                            (size_t)filesize,
+                                            file) == 0)
+                    {
+                        fclose(file);
+
+                        printf("\nFile received: %s (%ld bytes)\n",
+                               filename,
+                               filesize);
+                    }
+                    else
+                    {
+                        fclose(file);
+                        remove(filename);
+
+                        printf("\nFile receive failed: %s\n",
+                               filename);
+                    }
+                }
+
+                printf("> ");
+                fflush(stdout);
+                continue;
+            }
+        }
 
         printf("\n%s", buffer);
         printf("> ");
@@ -42,6 +202,28 @@ void *receive_messages(void *arg)
 
     return NULL;
 }
+int send_all(int socket, const void *data, size_t length)
+{
+    size_t total_sent = 0;
+
+    while (total_sent < length)
+    {
+        ssize_t sent = send(socket,
+                            (const char *)data + total_sent,
+                            length - total_sent,
+                            0);
+
+        if (sent <= 0)
+        {
+            return -1;
+        }
+
+        total_sent += sent;
+    }
+
+    return 0;
+}
+
 
 int main(void)
 {
@@ -131,7 +313,82 @@ int main(void)
         if (fgets(command, sizeof(command), stdin) == NULL)
         {
             break;
+        }        if (strncmp(command, "SENDFILE ", 9) == 0)
+        {
+            char target[100];
+            char filename[256];
+            long filesize;
+
+            if (sscanf(command + 9, "%99s %255s %ld",
+                       target, filename, &filesize) != 3)
+            {
+                printf("Usage: SENDFILE <target> <filename> <filesize>\n");
+                printf("> ");
+                fflush(stdout);
+                continue;
+            }
+
+            FILE *file = fopen(filename, "rb");
+
+            if (file == NULL)
+            {
+                perror("File open");
+                printf("> ");
+                fflush(stdout);
+                continue;
+            }
+
+            fseek(file, 0, SEEK_END);
+            long actual_size = ftell(file);
+            fseek(file, 0, SEEK_SET);
+
+            if (actual_size != filesize)
+            {
+                printf("File size mismatch. Actual: %ld bytes\n",
+                       actual_size);
+                fclose(file);
+                printf("> ");
+                fflush(stdout);
+                continue;
+            }
+
+            if (send_all(client_socket,
+                         command,
+                         strlen(command)) < 0)
+            {
+                perror("send");
+                fclose(file);
+                break;
+            }
+
+            char file_buffer[BUFFER_SIZE];
+            size_t bytes_read;
+
+            while ((bytes_read = fread(file_buffer,
+                                       1,
+                                       sizeof(file_buffer),
+                                       file)) > 0)
+            {
+                if (send_all(client_socket,
+                             file_buffer,
+                             bytes_read) < 0)
+                {
+                    perror("send file");
+                    
+                    break;
+                }
+            }
+
+            fclose(file);
+
+            printf("File sent: %s (%ld bytes)\n",
+                   filename, filesize);
+
+            printf("> ");
+            fflush(stdout);
+            continue;
         }
+
 
         if (send(client_socket,
                  command,
