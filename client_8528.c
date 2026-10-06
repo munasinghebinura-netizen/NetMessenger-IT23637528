@@ -6,6 +6,12 @@
 #include <arpa/inet.h>
 #include <pthread.h>
 
+#define USERNAME_SIZE 50
+#define GREEN "\033[32m"
+#define RED "\033[31m"
+#define BLUE "\033[34m"
+#define YELLOW "\033[33m"
+#define RESET "\033[0m"
 #define SERVER_IP "127.0.0.1"
 #define PORT 14528
 #define BUFFER_SIZE 4096
@@ -195,9 +201,64 @@ size_t pending_len = 0;
             }
         }
 
-        printf("\n%s", buffer);
-        printf("> ");
-        fflush(stdout);
+       if (strncmp(buffer, "MSG PRIV ", 9) == 0)
+{
+    char sender[USERNAME_SIZE];
+    char *message = strchr(buffer + 9, ' ');
+
+    if (message != NULL)
+    {
+        *message = '\0';
+        strcpy(sender, buffer + 9);
+        message++;
+
+        printf("\n" RED "%s: %s" RESET "\n", sender, message);
+    }
+}
+else if (strncmp(buffer, "MSG ROOM ", 9) == 0)
+{
+    char room[USERNAME_SIZE];
+    char sender[USERNAME_SIZE];
+    char *message = buffer + 9;
+
+    sscanf(message, "%s %s", room, sender);
+
+    message = strchr(message, ' ');
+    if (message != NULL)
+    {
+        message++;
+        message = strchr(message, ' ');
+
+        if (message != NULL)
+        {
+            message++;
+            printf("\n" BLUE "[%s] %s: %s" RESET "\n",
+       room, sender, message);
+        }
+    }
+}
+else if (strncmp(buffer, "MSG BCAST ", 10) == 0)
+{
+    char sender[USERNAME_SIZE];
+    char *message = strchr(buffer + 10, ' ');
+
+    if (message != NULL)
+    {
+        *message = '\0';
+        strcpy(sender, buffer + 10);
+        message++;
+
+        printf("\n" GREEN "[BROADCAST] %s: %s" RESET "\n",
+       sender, message);
+    }
+}
+else
+{
+    printf("\n" YELLOW "%s" RESET "\n", buffer);
+}
+
+printf("> ");
+fflush(stdout);
     }
 
     return NULL;
@@ -401,6 +462,7 @@ int main(void)
 
         if (strncmp(command, "QUIT", 4) == 0)
         {
+           sleep(1);
             break;
         }
 
