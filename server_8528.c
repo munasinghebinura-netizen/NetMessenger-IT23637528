@@ -765,7 +765,9 @@ snprintf(log_message,
 
 write_log(log_message);
             continue;
-        }        if (strncmp(buffer, "SENDFILE ", 9) == 0)
+        }       
+
+        if (strncmp(buffer, "SENDFILE ", 9) == 0)
         {
             char target[USERNAME_SIZE];
             char filename[256];
@@ -788,126 +790,216 @@ write_log(log_message);
 
             printf("SENDFILE request: %s -> %s (%ld bytes)\n",
                    username, target, filesize);
-                         int target_socket = find_client_socket(target);
 
-        if (target_socket < 0)
-        {
-            send_response(client_socket,
-                          "ERR 002 USER_NOT_FOUND");
-            continue;
-        }
-                           char filepath[BUFFER_SIZE];
-        char sender_directory[BUFFER_SIZE];
+            /* Check whether target is a user */
+            int target_socket = find_client_socket(target);
 
-        snprintf(sender_directory,
-                 sizeof(sender_directory),
-                 "storage/IT236378528/%s",
-                 username);
+            /* Check whether target is a room */
+            int room_index = -1;
 
-        snprintf(filepath,
-                 sizeof(filepath),
-                 "%s/%s",
-                 sender_directory,
-                 filename);
-                     FILE *file = fopen(filepath, "wb");
+            pthread_mutex_lock(&rooms_mutex);
 
-        if (file == NULL)
-        {
-            send_response(client_socket,
-                          "ERR 004 FILE_TOO_LARGE");
-            continue;
-        }
-
-              if (receive_file_data(client_socket,
-                              pending,
-                              &pending_len,
-                              (size_t)filesize,
-                              file) != 0)
-        {
-            fclose(file);
-            remove(filepath);
-            break;
-        }
-             fclose(file);
-                     char file_header[BUFFER_SIZE];
-
-        snprintf(file_header,
-                 sizeof(file_header),
-                 "FILE %s %ld\n",
-                 filename,
-                 filesize);
-
-        if (send_all_bytes(target_socket,
-                           file_header,
-                           strlen(file_header)) != 0)
-        {
-            printf("Failed to send file header to %s\n", target);
-        }
-        else
-        {
-            FILE *send_file = fopen(filepath, "rb");
-
-            if (send_file == NULL)
+            for (int i = 0; i < room_count; i++)
             {
-                printf("Failed to reopen file for sending\n");
+                if (strcmp(rooms[i].name, target) == 0)
+                {
+                    room_index = i;
+                    break;
+                }
             }
-            else
-            {
-                char send_buffer[BUFFER_SIZE];
-                size_t bytes_read;
 
-                while ((bytes_read =
-                        fread(send_buffer,
-                              1,
-                              sizeof(send_buffer),
-                              send_file)) > 0)
+            pthread_mutex_unlock(&rooms_mutex);
+
+            /* Target does not exist as user or room */
+            if (target_socket < 0 && room_index < 0)
+            {
+                send_response(client_socket,
+                              "ERR 003 ROOM_NOT_FOUND");
+                continue;
+            }
+
+            char filepath[BUFFER_SIZE];
+            char sender_directory[BUFFER_SIZE];
+
+            snprintf(sender_directory,
+                     sizeof(sender_directory),
+                     "storage/IT236378528/%s",
+                     username);
+
+            snprintf(filepath,
+                     sizeof(filepath),
+                     "%s/%s",
+                     sender_directory,
+                     filename);
+
+            FILE *file = fopen(filepath, "wb");
+
+            if (file == NULL)
+            {
+                send_response(client_socket,
+                              "ERR 004 FILE_TOO_LARGE");
+                continue;
+            }
+
+            /* Receive exactly filesize bytes from sender */
+            if (receive_file_data(client_socket,
+                                  pending,
+                                  &pending_len,
+                                  (size_t)filesize,
+                                  file) != 0)
+            {
+                fclose(file);
+                remove(filepath);
+                break;
+            }
+
+            fclose(file);
+
+            char file_header[BUFFER_SIZE];
+
+            snprintf(file_header,
+                     sizeof(file_header),
+                     "FILE %s %ld\n",
+                     filename,
+                     filesize);
+
+            /* Send to a single user */
+            if (target_socket >= 0)
+            {
+                FILE *send_file = fopen(filepath, "rb");
+
+                if (send_file == NULL)
+                {
+                    printf("Failed to reopen file for sending\n");
+                }
+                else
                 {
                     if (send_all_bytes(target_socket,
-                                       send_buffer,
-                                       bytes_read) != 0)
+                                       file_header,
+                                       strlen(file_header)) == 0)
                     {
-                        printf("Failed to send file to %s\n",
-                               target);
-                        break;
+                        char send_buffer[BUFFER_SIZE];
+                        size_t bytes_read;
+
+                        while ((bytes_read =
+                                fread(send_buffer,
+                                      1,
+                                      sizeof(send_buffer),
+                                      send_file)) > 0)
+                        {
+                            if (send_all_bytes(target_socket,
+                                               send_buffer,
+                                               bytes_read) != 0)
+                            {
+                                printf("Failed to send file to %s\n",
+                                       target);
+                                break;
+                            }
+                        }
                     }
+
+                    fclose(send_file);
+
+                    printf("File forwarded: %s -> %s (%ld bytes)\n",
+                           username,
+                           target,
+                           filesize);
+                }
+            }
+
+            /* Send to all members of a room */
+            else
+            {
+                int member_sockets[MAX_ROOM_MEMBERS];
+                int member_count;
+
+                pthread_mutex_lock(&rooms_mutex);
+
+                member_count = rooms[room_index].member_count;
+
+                for (int i = 0; i < member_count; i++)
+                {
+                    member_sockets[i] =
+                        rooms[room_index].members[i];
                 }
 
-                fclose(send_file);
+                pthread_mutex_unlock(&rooms_mutex);
 
-                printf("File forwarded: %s -> %s (%ld bytes)\n",
+                for (int i = 0; i < member_count; i++)
+                {
+                    int member_socket = member_sockets[i];
+
+                    /* Do not send the file back to sender */
+                    if (member_socket == client_socket)
+                    {
+                        continue;
+                    }
+
+                    FILE *send_file = fopen(filepath, "rb");
+
+                    if (send_file == NULL)
+                    {
+                        printf("Failed to reopen file for room member\n");
+                        continue;
+                    }
+
+                    if (send_all_bytes(member_socket,
+                                       file_header,
+                                       strlen(file_header)) != 0)
+                    {
+                        fclose(send_file);
+                        continue;
+                    }
+
+                    char send_buffer[BUFFER_SIZE];
+                    size_t bytes_read;
+
+                    while ((bytes_read =
+                            fread(send_buffer,
+                                  1,
+                                  sizeof(send_buffer),
+                                  send_file)) > 0)
+                    {
+                        if (send_all_bytes(member_socket,
+                                           send_buffer,
+                                           bytes_read) != 0)
+                        {
+                            break;
+                        }
+                    }
+
+                    fclose(send_file);
+                }
+
+                printf("File forwarded: %s -> room %s (%ld bytes)\n",
                        username,
                        target,
                        filesize);
             }
+
+            char response[BUFFER_SIZE];
+
+            snprintf(response,
+                     sizeof(response),
+                     "OK FILE_RECEIVED %s",
+                     filename);
+
+            send_response(client_socket, response);
+
+            char log_message[BUFFER_SIZE];
+
+            snprintf(log_message,
+                     sizeof(log_message),
+                     "SENDFILE from %s to %s: %s (%ld bytes)",
+                     username,
+                     target,
+                     filename,
+                     filesize);
+
+            write_log(log_message);
+
+            continue;
         }
-                     char response[BUFFER_SIZE];
-
-        snprintf(response,
-                 sizeof(response),
-                 "OK FILE_RECEIVED %s",
-                 filename);
-
-        send_response(client_socket, response);
-          char log_message[BUFFER_SIZE];
-
-snprintf(log_message,
-         sizeof(log_message),
-         "SENDFILE from %s to %s: %s (%ld bytes)",
-         username,
-         target,
-         filename,
-         filesize);
-
-write_log(log_message);
-
-        printf("File received: %s (%ld bytes)\n",
-               filepath,
-               filesize);
-
-                     continue;
-    }       
-            
-
 
 
 
