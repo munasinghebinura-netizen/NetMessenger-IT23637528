@@ -13,7 +13,7 @@
 #define YELLOW "\033[33m"
 #define RESET "\033[0m"
 #define SERVER_IP "127.0.0.1"
-#define PORT 14528
+#define PORT 13528
 #define BUFFER_SIZE 4096
 
 int client_socket;

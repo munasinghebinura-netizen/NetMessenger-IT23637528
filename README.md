@@ -7,11 +7,11 @@ Module: IE3010 - Network Programming
 Project: NetMessenger - Multi-Client Chat and File-Sharing Platform
 
 ## Personalization
-Port: 14528
-NID: 6378
-Server Source: server_8528.c
-Client Source: client_8528.c
-Makefile: Makefile_8528
+Port: 13528
+NID: 6375
+Server Source: server_7528.c
+Client Source: client_7528.c
+Makefile: Makefile_7528
 Log File: netmsg_IT23637528.log
 Storage Directory: ./storage/IT23637528/
 

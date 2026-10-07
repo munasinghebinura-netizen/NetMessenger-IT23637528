@@ -8,14 +8,14 @@
 #include <pthread.h>
 #include <time.h>
 #include <sys/stat.h>
-#define PORT 14528
-#define NID "6378"
+#define PORT 13528
+#define NID "6375"
 #define BACKLOG 10
 #define MAX_CLIENTS 50
 #define USERNAME_SIZE 50
 #define BUFFER_SIZE 4096
 
-#define LOG_FILE "netmsg_IT236378528.log"
+#define LOG_FILE "netmsg_IT23637528.log"
 
 typedef struct
 {
@@ -192,10 +192,10 @@ void create_storage_directory(const char *username)
     char path[BUFFER_SIZE];
 
     mkdir("storage", 0777);
-    mkdir("storage/IT236378528", 0777);
+    mkdir("storage/IT23637528", 0777);
 
     snprintf(path, sizeof(path),
-             "storage/IT236378528/%s",
+             "storage/IT23637528/%s",
              username);
 
     mkdir(path, 0777);
@@ -823,7 +823,7 @@ write_log(log_message);
 
             snprintf(sender_directory,
                      sizeof(sender_directory),
-                     "storage/IT236378528/%s",
+                     "storage/IT23637528/%s",
                      username);
 
             snprintf(filepath,
